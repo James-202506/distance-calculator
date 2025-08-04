@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>坐标距离计算器</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        input { width: 100%; padding: 8px; margin: 5px 0; }
+        button { background: #07f; color: white; border: none; padding: 10px; width: 100%; }
+    </style>
+</head>
+<body>
+    <h2>坐标距离计算器</h2>
+    <p>输入两点坐标 (x, y, z)：</p>
+    <h3>点 1</h3>
+    <input type="number" id="x1" placeholder="x1">
+    <input type="number" id="y1" placeholder="y1">
+    <input type="number" id="z1" placeholder="z1">
+    <h3>点 2</h3>
+    <input type="number" id="x2" placeholder="x2">
+    <input type="number" id="y2" placeholder="y2">
+    <input type="number" id="z2" placeholder="z2">
+    <button onclick="calculate()">计算距离</button>
+    <p id="result"></p>
+
+    <script>
+        function calculate() {
+            const x1 = parseFloat(document.getElementById('x1').value);
+            const y1 = parseFloat(document.getElementById('y1').value);
+            const z1 = parseFloat(document.getElementById('z1').value);
+            const x2 = parseFloat(document.getElementById('x2').value);
+            const y2 = parseFloat(document.getElementById('y2').value);
+            const z2 = parseFloat(document.getElementById('z2').value);
+
+            const distance = Math.sqrt(
+                Math.pow(x2 - x1, 2) + 
+                Math.pow(y2 - y1, 2) + 
+                Math.pow(z2 - z1, 2)
+            );
+
+            document.getElementById('result').innerHTML = `距离: ${distance.toFixed(2)} 单位`;
+        }
+    </script>
+</body>
+</html>
