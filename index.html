@@ -1,44 +1,261 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-    <title>坐标距离计算器</title>
-    <style>
-        body { font-family: Arial, sans-serif; padding: 20px; }
-        input { width: 100%; padding: 8px; margin: 5px 0; }
-        button { background: #07f; color: white; border: none; padding: 10px; width: 100%; }
-    </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>2关节机器人 + 水平滑环（肘形态 + 紧邻数值显示）</title>
+<style>
+  body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; background:#fff; color:#111}
+  .wrap{display:flex; gap:20px; padding:16px}
+  .panel{flex:0 0 340px}
+  .row{display:grid; grid-template-columns: 120px 1fr 52px; gap:8px; align-items:center; margin:10px 0}
+  .row select{grid-column: 2 / span 1}
+  .read{padding:8px 10px; border:1px solid #ddd; border-radius:8px; background:#fafafa; font-variant-numeric: tabular-nums}
+  input[type="range"]{width:100%}
+  svg{border:1px solid #ccc; background:#fff}
+  .muted{color:#666; font-size:12px}
+  .tip{font-size:12px; color:#888}
+</style>
 </head>
 <body>
-    <h2>坐标距离计算器</h2>
-    <p>输入两点坐标 (x, y, z)：</p>
-    <h3>点 1</h3>
-    <input type="number" id="x1" placeholder="x1">
-    <input type="number" id="y1" placeholder="y1">
-    <input type="number" id="z1" placeholder="z1">
-    <h3>点 2</h3>
-    <input type="number" id="x2" placeholder="x2">
-    <input type="number" id="y2" placeholder="y2">
-    <input type="number" id="z2" placeholder="z2">
-    <button onclick="calculate()">计算距离</button>
-    <p id="result"></p>
+<div class="wrap">
+  <!-- 画布 -->
+  <svg id="svg" viewBox="0 0 800 500" width="800" height="500" aria-label="2-link robot demo">
+    <defs>
+      <marker id="arrowX" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 z" fill="#888"/>
+      </marker>
+      <marker id="arrowY" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 z" fill="#888"/>
+      </marker>
+    </defs>
 
-    <script>
-        function calculate() {
-            const x1 = parseFloat(document.getElementById('x1').value);
-            const y1 = parseFloat(document.getElementById('y1').value);
-            const z1 = parseFloat(document.getElementById('z1').value);
-            const x2 = parseFloat(document.getElementById('x2').value);
-            const y2 = parseFloat(document.getElementById('y2').value);
-            const z2 = parseFloat(document.getElementById('z2').value);
+    <!-- 1轴在底部中间 (400,460)；以1轴为原点的坐标轴 -->
+    <line id="axisX" x1="400" y1="460" x2="760" y2="460" stroke="#aaa" stroke-width="1.5" marker-end="url(#arrowX)"/>
+    <line id="axisY" x1="400" y1="460" x2="400" y2="100" stroke="#aaa" stroke-width="1.5" marker-end="url(#arrowY)"/>
 
-            const distance = Math.sqrt(
-                Math.pow(x2 - x1, 2) + 
-                Math.pow(y2 - y1, 2) + 
-                Math.pow(z2 - z1, 2)
-            );
+    <!-- 红线（可拖）及更宽命中区 -->
+    <line id="hline" x1="60" x2="740" y1="180" y2="180" stroke="red" stroke-width="2"/>
+    <line id="hlineHit" x1="60" x2="740" y1="180" y2="180" stroke="red" stroke-opacity="0" stroke-width="18" pointer-events="stroke"/>
 
-            document.getElementById('result').innerHTML = `两点之间的距离: ${distance.toFixed(2)} mm`;
-        }
-    </script>
+    <!-- 滑环（可拖 X），极薄填充提高命中；鼠标手形 -->
+    <circle id="ee" cx="420" cy="180" r="12" fill="#000" fill-opacity="0.001" stroke="#2458ff" stroke-width="2" style="cursor:grab"/>
+
+    <!-- 两连杆 -->
+    <line id="link1" x1="400" y1="460" x2="520" y2="300" stroke="#9bd2ff" stroke-width="5"/>
+    <line id="link2" x1="520" y1="300" x2="420" y2="180" stroke="#78c7ff" stroke-width="5"/>
+
+    <!-- 关节与编号（数字与圆分开） -->
+    <circle id="j1" cx="400" cy="460" r="15" fill="white" fill-opacity="0.001" stroke="#2458ff" stroke-width="3"/>
+    <text id="label1" x="400" y="484" text-anchor="middle" font-weight="700" fill="#2458ff">1</text>
+
+    <circle id="j2" cx="520" cy="300" r="12" fill="white" fill-opacity="0.001" stroke="#2458ff" stroke-width="3"/>
+    <!-- 初始放在关节2左上方，后续在JS里动态偏移 -->
+    <text id="label2" x="502" y="282" text-anchor="middle" font-weight="700" fill="#2458ff">2</text>
+
+    <!-- 角度与坐标显示（SVG 内） -->
+    <text id="t1" x="520" y="40">轴1: 0°</text>
+    <text id="t2" x="520" y="60">轴2: 0°</text>
+    <text id="coord" x="520" y="85">P(x,y) = (0.0, 0.0)</text>
+    <text class="tip" x="520" y="104">坐标以1轴为原点（X→右、Y↑上）</text>
+  </svg>
+
+  <!-- 控制面板 -->
+  <div class="panel">
+    <div class="read" id="pos">末端XY: (0.0, 0.0)</div>
+
+    <div class="row">
+      <label>滑环位置 X</label>
+      <input id="x" type="range" min="70" max="730" step="1" value="420"/>
+      <span id="xv" class="muted">420</span>
+    </div>
+    <div class="row">
+      <label>红线高度 Y</label>
+      <input id="y" type="range" min="60" max="360" step="1" value="180"/>
+      <span id="yv" class="muted">180</span>
+    </div>
+    <div class="row">
+      <label>连杆1长度 L1</label>
+      <input id="l1" type="range" min="60" max="260" step="1" value="180"/>
+      <span id="l1v" class="muted">180</span>
+    </div>
+    <div class="row">
+      <label>连杆2长度 L2</label>
+      <input id="l2" type="range" min="60" max="260" step="1" value="160"/>
+      <span id="l2v" class="muted">160</span>
+    </div>
+    <div class="row">
+      <label>肘形态</label>
+      <select id="elbow">
+        <option value="down" selected>肘下</option>
+        <option value="up">肘上</option>
+      </select>
+      <span class="muted">选择逆解</span>
+    </div>
+
+    <details class="row" style="grid-template-columns: 1fr;">
+      <summary>自检结果 (Tests)</summary>
+      <div id="tests" class="muted"></div>
+    </details>
+  </div>
+</div>
+
+<script>
+(function(){
+  // 基本参数与工具
+  const base = { x:400, y:460 };                        // 1轴位置（底部中间）
+  const clamp = (v,a,b)=>Math.min(Math.max(v,a),b);
+  const toDeg = r=>r*180/Math.PI;
+
+  // 元素引用（确保全部存在，避免空引用）
+  const svg = document.getElementById('svg');
+  const xS = document.getElementById('x');
+  const yS = document.getElementById('y');
+  const l1S = document.getElementById('l1');
+  const l2S = document.getElementById('l2');
+  const elbowS = document.getElementById('elbow');
+  const hline = document.getElementById('hline');
+  const hlineHit = document.getElementById('hlineHit');
+  const ee = document.getElementById('ee');
+  const link1 = document.getElementById('link1');
+  const link2 = document.getElementById('link2');
+  const j2 = document.getElementById('j2');
+  const label2 = document.getElementById('label2');
+  const t1 = document.getElementById('t1');
+  const t2 = document.getElementById('t2');
+  const coordTxt = document.getElementById('coord');
+  const pos = document.getElementById('pos');
+  const testsBox = document.getElementById('tests');
+  const xv = document.getElementById('xv');
+  const yv = document.getElementById('yv');
+  const l1v = document.getElementById('l1v');
+  const l2v = document.getElementById('l2v');
+
+  const LABEL2_OFFSET = { x:-18, y:-22 };               // 让数字2避开关节圆
+
+  function update(){
+    // 读控件值
+    let xIn = +xS.value;
+    let yIn = +yS.value;
+    const L1 = +l1S.value;
+    const L2 = +l2S.value;
+
+    // —— 工作空间夹紧（保持连杆长度不变） —— //
+    const dyRaw = yIn - base.y;
+    const dyClamp = clamp(dyRaw, -(L1+L2), (L1+L2));
+    const y = base.y + dyClamp;
+
+    const dxDesired = xIn - base.x;
+    const rMax = L1 + L2;
+    const rMin = Math.abs(L1 - L2);
+    const dxMax = Math.sqrt(Math.max(0, rMax*rMax - dyClamp*dyClamp));
+    const dxMin = Math.sqrt(Math.max(0, rMin*rMin - dyClamp*dyClamp));
+    let sgn = Math.sign(dxDesired) || 1;
+    let absDx = Math.abs(dxDesired);
+    if (absDx > dxMax) absDx = dxMax;
+    if (absDx < dxMin) absDx = dxMin;
+    const x = base.x + sgn * absDx;
+
+    // 同步红线位置与滑块显示
+    hline.setAttribute('y1', y); hline.setAttribute('y2', y);
+    if (Math.abs(+yS.value - y) > 0.5) yS.value = Math.round(y);
+    if (Math.abs(+xS.value - x) > 0.5) xS.value = Math.round(x);
+
+    // —— 两连杆逆解（肘上/肘下） —— //
+    const dx = x - base.x;
+    const dy = y - base.y;
+    const r2 = dx*dx + dy*dy;
+    let c2 = (r2 - L1*L1 - L2*L2) / (2*L1*L2);
+    c2 = clamp(c2, -1, 1);
+    const sgnElbow = (elbowS.value === 'up') ? -1 : +1;
+    const s2 = sgnElbow * Math.sqrt(Math.max(0, 1 - c2*c2));   // 肘下：+，肘上：-
+    const th2 = Math.atan2(s2, c2);
+    const k1 = L1 + L2*c2, k2 = L2*s2;
+    const th1 = Math.atan2(dy, dx) - Math.atan2(k2, k1);
+
+    // —— 正解绘制（严格保持 L1/L2） —— //
+    const j2x = base.x + L1*Math.cos(th1);
+    const j2y = base.y + L1*Math.sin(th1);
+    const ex  = j2x + L2*Math.cos(th1+th2);
+    const ey  = j2y + L2*Math.sin(th1+th2);
+
+    link1.setAttribute('x1', base.x); link1.setAttribute('y1', base.y);
+    link1.setAttribute('x2', j2x);    link1.setAttribute('y2', j2y);
+    link2.setAttribute('x1', j2x);    link2.setAttribute('y1', j2y);
+    link2.setAttribute('x2', ex);     link2.setAttribute('y2', ey);
+    j2.setAttribute('cx', j2x);       j2.setAttribute('cy', j2y);
+    label2.setAttribute('x', j2x + LABEL2_OFFSET.x);
+    label2.setAttribute('y', j2y + LABEL2_OFFSET.y);
+    ee.setAttribute('cx', ex);        ee.setAttribute('cy', ey);
+
+    // —— 读数 —— //
+    const localX = (ex - base.x).toFixed(1);     // X 右正
+    const localY = (base.y - ey).toFixed(1);     // Y 上正
+    pos.textContent = `末端XY: (${localX}, ${localY})`;
+    t1.textContent = '轴1: ' + toDeg(th1).toFixed(1) + '°';
+    t2.textContent = '轴2: ' + toDeg(th2).toFixed(1) + '°';
+    coordTxt.textContent = `P(x,y) = (${localX}, ${localY})`;
+
+    // 滑块旁数值（显示有效值）
+    xv.textContent = Math.round(x);
+    yv.textContent = Math.round(y);
+    l1v.textContent = Math.round(L1);
+    l2v.textContent = Math.round(L2);
+  }
+
+  // 滑块与下拉框联动
+  ['input','change'].forEach(ev=>{
+    xS.addEventListener(ev, update);
+    yS.addEventListener(ev, update);
+    l1S.addEventListener(ev, update);
+    l2S.addEventListener(ev, update);
+    elbowS.addEventListener(ev, update);
+  });
+
+  // 拖动滑环（改 X）
+  let draggingEE = false;
+  ee.addEventListener('pointerdown', (e)=>{ draggingEE = true; ee.setPointerCapture(e.pointerId); ee.style.cursor='grabbing'; e.preventDefault(); });
+  ee.addEventListener('pointerup',   (e)=>{ draggingEE = false; ee.releasePointerCapture(e.pointerId); ee.style.cursor='grab'; });
+  ee.addEventListener('pointermove', (e)=>{
+    if(!draggingEE) return;
+    const rect = svg.getBoundingClientRect();
+    const x = clamp(e.clientX - rect.left, +xS.min, +xS.max);
+    xS.value = Math.round(x);
+    update();
+  });
+
+  // 拖动红线（改 Y）
+  let draggingY = false;
+  const startY = (e)=>{ draggingY = true; hlineHit.setPointerCapture(e.pointerId); };
+  hline.addEventListener('pointerdown', startY);
+  hlineHit.addEventListener('pointerdown', startY);
+  hlineHit.addEventListener('pointerup',   (e)=>{ draggingY = false; hlineHit.releasePointerCapture(e.pointerId); });
+  hlineHit.addEventListener('pointermove', (e)=>{
+    if(!draggingY) return;
+    const rect = svg.getBoundingClientRect();
+    const y = clamp(e.clientY - rect.top, +yS.min, +yS.max);
+    yS.value = Math.round(y);
+    update();
+  });
+
+  // 自检（简单测试）
+  function runTests(){
+    const results = [];
+    const ok = (name, cond)=> results.push(`${cond?'✔':'✘'} ${name}`);
+    ok('元素存在: pos', !!pos);
+    ok('元素存在: coord', !!coordTxt);
+    ok('元素存在: hlineHit', !!hlineHit);
+    ok('元素存在: elbow', !!elbowS);
+    update();
+    const isNum = v => !isNaN(parseFloat(v));
+    const xy = pos.textContent.match(/([\-\\d\\.]+),\\s*([\-\\d\\.]+)/);
+    ok('坐标可解析', !!xy);
+    ok('X 为数值', xy && isNum(xy[1]));
+    ok('Y 为数值', xy && isNum(xy[2]));
+    testsBox.textContent = results.join('\\n');
+  }
+  runTests();
+})();
+</script>
 </body>
 </html>
