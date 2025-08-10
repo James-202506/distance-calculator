@@ -1,261 +1,512 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>2关节机器人 + 水平滑环（肘形态 + 紧邻数值显示）</title>
-<style>
-  body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; background:#fff; color:#111}
-  .wrap{display:flex; gap:20px; padding:16px}
-  .panel{flex:0 0 340px}
-  .row{display:grid; grid-template-columns: 120px 1fr 52px; gap:8px; align-items:center; margin:10px 0}
-  .row select{grid-column: 2 / span 1}
-  .read{padding:8px 10px; border:1px solid #ddd; border-radius:8px; background:#fafafa; font-variant-numeric: tabular-nums}
-  input[type="range"]{width:100%}
-  svg{border:1px solid #ccc; background:#fff}
-  .muted{color:#666; font-size:12px}
-  .tip{font-size:12px; color:#888}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D六轴机器人手动操作 (高精度版)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #333;
+            color: #fff;
+        }
+        #viewport {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        #control-panel {
+            position: absolute; /* 改为绝对定位 */
+            top: 20px;        /* 距离顶部20px */
+            right: 20px;       /* 距离右侧20px */
+            z-index: 10;
+            background-color: rgba(40, 40, 40, 0.9);
+            padding: 15px;
+            border-radius: 15px;
+            border: 1px solid #555;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.5);
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            user-select: none; /* 防止文本被选中 */
+        }
+        .control-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .control-group.center {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        .control-button {
+            background-color: #5a5a5a;
+            color: #fff;
+            border: 1px solid #444;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            padding: 12px 0;
+            cursor: pointer;
+            transition: background-color 0.1s;
+            text-align: center;
+        }
+        .control-button:hover {
+            background-color: #6a6a6a;
+        }
+        .control-button:active {
+            background-color: #007bff;
+            border-color: #0056b3;
+            transform: scale(0.95);
+        }
+        .control-button .axis-label {
+            font-size: 20px;
+        }
+        .control-button .joint-label {
+            font-size: 12px;
+            color: #a0e0ff;
+        }
+        .mode-selector {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #333;
+            padding: 8px;
+            border-radius: 8px;
+        }
+        .mode-selector label {
+            margin: 4px 0;
+            cursor: pointer;
+            padding: 5px 15px;
+            border-radius: 5px;
+            transition: background-color 0.2s;
+        }
+        .mode-selector input[type="radio"] {
+            display: none;
+        }
+        .mode-selector input[type="radio"]:checked + label {
+            background-color: #007bff;
+            color: white;
+            font-weight: bold;
+        }
+        .speed-control {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .speed-control label {
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        .speed-control input[type="range"] {
+            width: 100px;
+        }
+        #info-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 20;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+    </style>
 </head>
 <body>
-<div class="wrap">
-  <!-- 画布 -->
-  <svg id="svg" viewBox="0 0 800 500" width="800" height="500" aria-label="2-link robot demo">
-    <defs>
-      <marker id="arrowX" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-        <path d="M0,0 L8,4 L0,8 z" fill="#888"/>
-      </marker>
-      <marker id="arrowY" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-        <path d="M0,0 L8,4 L0,8 z" fill="#888"/>
-      </marker>
-    </defs>
 
-    <!-- 1轴在底部中间 (400,460)；以1轴为原点的坐标轴 -->
-    <line id="axisX" x1="400" y1="460" x2="760" y2="460" stroke="#aaa" stroke-width="1.5" marker-end="url(#arrowX)"/>
-    <line id="axisY" x1="400" y1="460" x2="400" y2="100" stroke="#aaa" stroke-width="1.5" marker-end="url(#arrowY)"/>
+    <div id="viewport"></div>
 
-    <!-- 红线（可拖）及更宽命中区 -->
-    <line id="hline" x1="60" x2="740" y1="180" y2="180" stroke="red" stroke-width="2"/>
-    <line id="hlineHit" x1="60" x2="740" y1="180" y2="180" stroke="red" stroke-opacity="0" stroke-width="18" pointer-events="stroke"/>
-
-    <!-- 滑环（可拖 X），极薄填充提高命中；鼠标手形 -->
-    <circle id="ee" cx="420" cy="180" r="12" fill="#000" fill-opacity="0.001" stroke="#2458ff" stroke-width="2" style="cursor:grab"/>
-
-    <!-- 两连杆 -->
-    <line id="link1" x1="400" y1="460" x2="520" y2="300" stroke="#9bd2ff" stroke-width="5"/>
-    <line id="link2" x1="520" y1="300" x2="420" y2="180" stroke="#78c7ff" stroke-width="5"/>
-
-    <!-- 关节与编号（数字与圆分开） -->
-    <circle id="j1" cx="400" cy="460" r="15" fill="white" fill-opacity="0.001" stroke="#2458ff" stroke-width="3"/>
-    <text id="label1" x="400" y="484" text-anchor="middle" font-weight="700" fill="#2458ff">1</text>
-
-    <circle id="j2" cx="520" cy="300" r="12" fill="white" fill-opacity="0.001" stroke="#2458ff" stroke-width="3"/>
-    <!-- 初始放在关节2左上方，后续在JS里动态偏移 -->
-    <text id="label2" x="502" y="282" text-anchor="middle" font-weight="700" fill="#2458ff">2</text>
-
-    <!-- 角度与坐标显示（SVG 内） -->
-    <text id="t1" x="520" y="40">轴1: 0°</text>
-    <text id="t2" x="520" y="60">轴2: 0°</text>
-    <text id="coord" x="520" y="85">P(x,y) = (0.0, 0.0)</text>
-    <text class="tip" x="520" y="104">坐标以1轴为原点（X→右、Y↑上）</text>
-  </svg>
-
-  <!-- 控制面板 -->
-  <div class="panel">
-    <div class="read" id="pos">末端XY: (0.0, 0.0)</div>
-
-    <div class="row">
-      <label>滑环位置 X</label>
-      <input id="x" type="range" min="70" max="730" step="1" value="420"/>
-      <span id="xv" class="muted">420</span>
-    </div>
-    <div class="row">
-      <label>红线高度 Y</label>
-      <input id="y" type="range" min="60" max="360" step="1" value="180"/>
-      <span id="yv" class="muted">180</span>
-    </div>
-    <div class="row">
-      <label>连杆1长度 L1</label>
-      <input id="l1" type="range" min="60" max="260" step="1" value="180"/>
-      <span id="l1v" class="muted">180</span>
-    </div>
-    <div class="row">
-      <label>连杆2长度 L2</label>
-      <input id="l2" type="range" min="60" max="260" step="1" value="160"/>
-      <span id="l2v" class="muted">160</span>
-    </div>
-    <div class="row">
-      <label>肘形态</label>
-      <select id="elbow">
-        <option value="down" selected>肘下</option>
-        <option value="up">肘上</option>
-      </select>
-      <span class="muted">选择逆解</span>
+    <div id="info-panel">
+        <div id="mode-display">模式: 关节 (Joint)</div>
+        <div id="coords-display"></div>
     </div>
 
-    <details class="row" style="grid-template-columns: 1fr;">
-      <summary>自检结果 (Tests)</summary>
-      <div id="tests" class="muted"></div>
-    </details>
-  </div>
-</div>
+    <div id="control-panel">
+        <!-- 左侧按钮组: X, Y, Z -->
+        <div class="control-group">
+            <button class="control-button" id="X+"><div class="axis-label">X+</div><div class="joint-label">J1+</div></button>
+            <button class="control-button" id="X-"><div class="axis-label">X-</div><div class="joint-label">J1-</div></button>
+            <button class="control-button" id="Y+"><div class="axis-label">Y+</div><div class="joint-label">J2+</div></button>
+            <button class="control-button" id="Y-"><div class="axis-label">Y-</div><div class="joint-label">J2-</div></button>
+            <button class="control-button" id="Z+"><div class="axis-label">Z+</div><div class="joint-label">J3+</div></button>
+            <button class="control-button" id="Z-"><div class="axis-label">Z-</div><div class="joint-label">J3-</div></button>
+        </div>
 
-<script>
-(function(){
-  // 基本参数与工具
-  const base = { x:400, y:460 };                        // 1轴位置（底部中间）
-  const clamp = (v,a,b)=>Math.min(Math.max(v,a),b);
-  const toDeg = r=>r*180/Math.PI;
+        <!-- 中间控制区: 模式与速度 -->
+        <div class="control-group center">
+            <div class="speed-control">
+                <label for="speed-slider">手动速度</label>
+                <input type="range" id="speed-slider" min="1" max="100" value="50">
+            </div>
+            <div class="mode-selector">
+                <input type="radio" id="mode-joint" name="coord-mode" value="joint" checked>
+                <label for="mode-joint">关节坐标</label>
+                <input type="radio" id="mode-base" name="coord-mode" value="base">
+                <label for="mode-base">基坐标</label>
+            </div>
+        </div>
+        
+        <!-- 右侧按钮组: A, B, C -->
+        <div class="control-group">
+            <button class="control-button" id="A+"><div class="axis-label">A+</div><div class="joint-label">J4+</div></button>
+            <button class="control-button" id="A-"><div class="axis-label">A-</div><div class="joint-label">J4-</div></button>
+            <button class="control-button" id="B+"><div class="axis-label">B+</div><div class="joint-label">J5+</div></button>
+            <button class="control-button" id="B-"><div class="axis-label">B-</div><div class="joint-label">J5-</div></button>
+            <button class="control-button" id="C+"><div class="axis-label">C+</div><div class="joint-label">J6+</div></button>
+            <button class="control-button" id="C-"><div class="axis-label">C-</div><div class="joint-label">J6-</div></button>
+        </div>
+    </div>
 
-  // 元素引用（确保全部存在，避免空引用）
-  const svg = document.getElementById('svg');
-  const xS = document.getElementById('x');
-  const yS = document.getElementById('y');
-  const l1S = document.getElementById('l1');
-  const l2S = document.getElementById('l2');
-  const elbowS = document.getElementById('elbow');
-  const hline = document.getElementById('hline');
-  const hlineHit = document.getElementById('hlineHit');
-  const ee = document.getElementById('ee');
-  const link1 = document.getElementById('link1');
-  const link2 = document.getElementById('link2');
-  const j2 = document.getElementById('j2');
-  const label2 = document.getElementById('label2');
-  const t1 = document.getElementById('t1');
-  const t2 = document.getElementById('t2');
-  const coordTxt = document.getElementById('coord');
-  const pos = document.getElementById('pos');
-  const testsBox = document.getElementById('tests');
-  const xv = document.getElementById('xv');
-  const yv = document.getElementById('yv');
-  const l1v = document.getElementById('l1v');
-  const l2v = document.getElementById('l2v');
+    <!-- 导入 Three.js 库 -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-  const LABEL2_OFFSET = { x:-18, y:-22 };               // 让数字2避开关节圆
+        // --- 场景设置 ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x333333);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(2, 2.5, 4);
 
-  function update(){
-    // 读控件值
-    let xIn = +xS.value;
-    let yIn = +yS.value;
-    const L1 = +l1S.value;
-    const L2 = +l2S.value;
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.getElementById('viewport').appendChild(renderer.domElement);
 
-    // —— 工作空间夹紧（保持连杆长度不变） —— //
-    const dyRaw = yIn - base.y;
-    const dyClamp = clamp(dyRaw, -(L1+L2), (L1+L2));
-    const y = base.y + dyClamp;
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1, 0);
 
-    const dxDesired = xIn - base.x;
-    const rMax = L1 + L2;
-    const rMin = Math.abs(L1 - L2);
-    const dxMax = Math.sqrt(Math.max(0, rMax*rMax - dyClamp*dyClamp));
-    const dxMin = Math.sqrt(Math.max(0, rMin*rMin - dyClamp*dyClamp));
-    let sgn = Math.sign(dxDesired) || 1;
-    let absDx = Math.abs(dxDesired);
-    if (absDx > dxMax) absDx = dxMax;
-    if (absDx < dxMin) absDx = dxMin;
-    const x = base.x + sgn * absDx;
+        // --- 灯光设置 ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(5, 10, 7.5);
+        scene.add(directionalLight);
+        
+        // --- 辅助工具 ---
+        const gridHelper = new THREE.GridHelper(10, 10);
+        scene.add(gridHelper);
+        const worldAxis = new THREE.AxesHelper(1);
+        scene.add(worldAxis);
 
-    // 同步红线位置与滑块显示
-    hline.setAttribute('y1', y); hline.setAttribute('y2', y);
-    if (Math.abs(+yS.value - y) > 0.5) yS.value = Math.round(y);
-    if (Math.abs(+xS.value - x) > 0.5) xS.value = Math.round(x);
+        // --- 机器人模型 (与之前版本相同) ---
+        const robot = new THREE.Group();
+        scene.add(robot);
+        const linkMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.5, roughness: 0.5 });
+        const jointMaterial = new THREE.MeshStandardMaterial({ color: 0x0055aa });
+        const baseHeight = 0.2, link1Height = 0.5, link2Length = 1.5, link3Length = 1.3, wristLength = 0.3;
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, baseHeight, 32), linkMaterial);
+        robot.add(base);
+        const joint1 = new THREE.Group();
+        base.add(joint1);
+        joint1.position.y = baseHeight / 2;
+        const j1Indicator = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, baseHeight + 0.01, 32), jointMaterial);
+        joint1.add(j1Indicator);
+        const link1 = new THREE.Mesh(new THREE.BoxGeometry(0.4, link1Height, 0.4), linkMaterial);
+        link1.position.y = link1Height / 2;
+        joint1.add(link1);
+        const joint2 = new THREE.Group();
+        link1.add(joint2);
+        joint2.position.y = link1Height / 2;
+        joint2.position.x = 0.2;
+        const j2Indicator = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.6, 32), jointMaterial);
+        j2Indicator.rotation.x = Math.PI / 2;
+        joint2.add(j2Indicator);
+        const link2 = new THREE.Mesh(new THREE.BoxGeometry(link2Length, 0.3, 0.3), linkMaterial);
+        link2.position.x = link2Length / 2;
+        joint2.add(link2);
+        const joint3 = new THREE.Group();
+        link2.add(joint3);
+        joint3.position.x = link2Length / 2;
+        const j3Indicator = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.5, 32), jointMaterial);
+        j3Indicator.rotation.x = Math.PI / 2;
+        joint3.add(j3Indicator);
+        const link3 = new THREE.Mesh(new THREE.BoxGeometry(link3Length, 0.25, 0.25), linkMaterial);
+        link3.position.x = link3Length / 2;
+        joint3.add(link3);
+        const joint4 = new THREE.Group();
+        link3.add(joint4);
+        joint4.position.x = link3Length / 2;
+        const j4Indicator = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.4, 32), jointMaterial);
+        j4Indicator.rotation.z = Math.PI / 2;
+        joint4.add(j4Indicator);
+        const link4 = new THREE.Mesh(new THREE.BoxGeometry(wristLength, 0.2, 0.2), linkMaterial);
+        link4.position.x = wristLength / 2;
+        joint4.add(link4);
+        const joint5 = new THREE.Group();
+        link4.add(joint5);
+        joint5.position.x = wristLength / 2;
+        const j5Indicator = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.3, 32), jointMaterial);
+        j5Indicator.rotation.x = Math.PI / 2;
+        joint5.add(j5Indicator);
+        const link5 = new THREE.Mesh(new THREE.BoxGeometry(wristLength, 0.15, 0.15), linkMaterial);
+        link5.position.x = wristLength / 2;
+        joint5.add(link5);
+        const joint6 = new THREE.Group();
+        link5.add(joint6);
+        joint6.position.x = wristLength/2;
+        const endEffector = new THREE.Group();
+        joint6.add(endEffector);
+        const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.05, 32), jointMaterial);
+        flange.rotation.z = Math.PI/2;
+        endEffector.add(flange);
+        const tool = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.2, 32), new THREE.MeshStandardMaterial({color: 0xffff00}));
+        tool.position.x = 0.1;
+        tool.rotation.z = -Math.PI / 2;
+        endEffector.add(tool);
+        const tcpHelper = new THREE.AxesHelper(0.25);
+        endEffector.add(tcpHelper);
+        const joints = [joint1, joint2, joint3, joint4, joint5, joint6];
 
-    // —— 两连杆逆解（肘上/肘下） —— //
-    const dx = x - base.x;
-    const dy = y - base.y;
-    const r2 = dx*dx + dy*dy;
-    let c2 = (r2 - L1*L1 - L2*L2) / (2*L1*L2);
-    c2 = clamp(c2, -1, 1);
-    const sgnElbow = (elbowS.value === 'up') ? -1 : +1;
-    const s2 = sgnElbow * Math.sqrt(Math.max(0, 1 - c2*c2));   // 肘下：+，肘上：-
-    const th2 = Math.atan2(s2, c2);
-    const k1 = L1 + L2*c2, k2 = L2*s2;
-    const th1 = Math.atan2(dy, dx) - Math.atan2(k2, k1);
+        // --- 控制逻辑 (与之前版本相同) ---
+        const motionState = {};
+        const buttons = document.querySelectorAll('.control-button');
+        let controlMode = 'joint';
+        let speed = 0.5;
+        function updateSpeed() {
+            const sliderValue = document.getElementById('speed-slider').value;
+            speed = (sliderValue / 100) * 1.5;
+        }
+        document.getElementById('speed-slider').addEventListener('input', updateSpeed);
+        updateSpeed();
+        buttons.forEach(button => {
+            const actionId = button.id;
+            motionState[actionId] = false;
+            const startMoving = () => { motionState[actionId] = true; };
+            const stopMoving = () => { motionState[actionId] = false; };
+            button.addEventListener('mousedown', startMoving);
+            button.addEventListener('mouseup', stopMoving);
+            button.addEventListener('mouseleave', stopMoving);
+            button.addEventListener('touchstart', (e) => { e.preventDefault(); startMoving(); }, { passive: false });
+            button.addEventListener('touchend', stopMoving);
+            button.addEventListener('touchcancel', stopMoving);
+        });
+        document.querySelectorAll('input[name="coord-mode"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                controlMode = e.target.value;
+                document.getElementById('mode-display').textContent = `模式: ${controlMode === 'joint' ? '关节 (Joint)' : '基坐标 (Base)'}`;
+            });
+        });
 
-    // —— 正解绘制（严格保持 L1/L2） —— //
-    const j2x = base.x + L1*Math.cos(th1);
-    const j2y = base.y + L1*Math.sin(th1);
-    const ex  = j2x + L2*Math.cos(th1+th2);
-    const ey  = j2y + L2*Math.sin(th1+th2);
+        const clock = new THREE.Clock();
+        
+        // --- 矩阵运算辅助函数 ---
+        // 矩阵求逆 (使用高斯-若尔当消元法)
+        function invertMatrix(M) {
+            if (M.length !== M[0].length) { return; }
+            const n = M.length;
+            const I = Array(n).fill(0).map(() => Array(n).fill(0));
+            for (let i = 0; i < n; i++) I[i][i] = 1;
 
-    link1.setAttribute('x1', base.x); link1.setAttribute('y1', base.y);
-    link1.setAttribute('x2', j2x);    link1.setAttribute('y2', j2y);
-    link2.setAttribute('x1', j2x);    link2.setAttribute('y1', j2y);
-    link2.setAttribute('x2', ex);     link2.setAttribute('y2', ey);
-    j2.setAttribute('cx', j2x);       j2.setAttribute('cy', j2y);
-    label2.setAttribute('x', j2x + LABEL2_OFFSET.x);
-    label2.setAttribute('y', j2y + LABEL2_OFFSET.y);
-    ee.setAttribute('cx', ex);        ee.setAttribute('cy', ey);
+            const C = M.map((row, i) => [...row, ...I[i]]);
 
-    // —— 读数 —— //
-    const localX = (ex - base.x).toFixed(1);     // X 右正
-    const localY = (base.y - ey).toFixed(1);     // Y 上正
-    pos.textContent = `末端XY: (${localX}, ${localY})`;
-    t1.textContent = '轴1: ' + toDeg(th1).toFixed(1) + '°';
-    t2.textContent = '轴2: ' + toDeg(th2).toFixed(1) + '°';
-    coordTxt.textContent = `P(x,y) = (${localX}, ${localY})`;
+            for (let i = 0; i < n; i++) {
+                let pivot = i;
+                while (pivot < n && C[pivot][i] === 0) pivot++;
+                if (pivot === n) return null; // No unique solution
+                [C[i], C[pivot]] = [C[pivot], C[i]];
+                
+                let div = C[i][i];
+                for (let j = i; j < 2 * n; j++) C[i][j] /= div;
+                
+                for (let k = 0; k < n; k++) {
+                    if (k !== i) {
+                        let mult = C[k][i];
+                        for (let j = i; j < 2 * n; j++) {
+                            C[k][j] -= mult * C[i][j];
+                        }
+                    }
+                }
+            }
+            return C.map(row => row.slice(n));
+        }
 
-    // 滑块旁数值（显示有效值）
-    xv.textContent = Math.round(x);
-    yv.textContent = Math.round(y);
-    l1v.textContent = Math.round(L1);
-    l2v.textContent = Math.round(L2);
-  }
+        // 矩阵乘法
+        function multiplyMatrices(A, B) {
+            const rowsA = A.length, colsA = A[0].length, rowsB = B.length, colsB = B[0].length;
+            if (colsA !== rowsB) return null;
+            const C = Array(rowsA).fill(0).map(() => Array(colsB).fill(0));
+            for (let i = 0; i < rowsA; i++) {
+                for (let j = 0; j < colsB; j++) {
+                    for (let k = 0; k < colsA; k++) {
+                        C[i][j] += A[i][k] * B[k][j];
+                    }
+                }
+            }
+            return C;
+        }
+        
+        // 向量乘以矩阵
+        function multiplyMatrixVector(M, V) {
+            const rows = M.length;
+            const cols = M[0].length;
+            if (cols !== V.length) return null;
+            const R = Array(rows).fill(0);
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    R[i] += M[i][j] * V[j];
+                }
+            }
+            return R;
+        }
 
-  // 滑块与下拉框联动
-  ['input','change'].forEach(ev=>{
-    xS.addEventListener(ev, update);
-    yS.addEventListener(ev, update);
-    l1S.addEventListener(ev, update);
-    l2S.addEventListener(ev, update);
-    elbowS.addEventListener(ev, update);
-  });
 
-  // 拖动滑环（改 X）
-  let draggingEE = false;
-  ee.addEventListener('pointerdown', (e)=>{ draggingEE = true; ee.setPointerCapture(e.pointerId); ee.style.cursor='grabbing'; e.preventDefault(); });
-  ee.addEventListener('pointerup',   (e)=>{ draggingEE = false; ee.releasePointerCapture(e.pointerId); ee.style.cursor='grab'; });
-  ee.addEventListener('pointermove', (e)=>{
-    if(!draggingEE) return;
-    const rect = svg.getBoundingClientRect();
-    const x = clamp(e.clientX - rect.left, +xS.min, +xS.max);
-    xS.value = Math.round(x);
-    update();
-  });
+        // --- 逆运动学 (阻尼最小二乘法 DLS) ---
+        function solveIK_DLS(targetVelocity, delta) {
+            const lambda = 0.1; // 阻尼系数，防止奇异姿态和运动过快
+            const epsilon = 0.001; // 数值微分的微小变化量
 
-  // 拖动红线（改 Y）
-  let draggingY = false;
-  const startY = (e)=>{ draggingY = true; hlineHit.setPointerCapture(e.pointerId); };
-  hline.addEventListener('pointerdown', startY);
-  hlineHit.addEventListener('pointerdown', startY);
-  hlineHit.addEventListener('pointerup',   (e)=>{ draggingY = false; hlineHit.releasePointerCapture(e.pointerId); });
-  hlineHit.addEventListener('pointermove', (e)=>{
-    if(!draggingY) return;
-    const rect = svg.getBoundingClientRect();
-    const y = clamp(e.clientY - rect.top, +yS.min, +yS.max);
-    yS.value = Math.round(y);
-    update();
-  });
+            // 1. 计算雅可比矩阵 J
+            const jacobian = [];
+            const initialPose = new THREE.Vector3();
+            const initialQuat = new THREE.Quaternion();
+            endEffector.getWorldPosition(initialPose);
+            endEffector.getWorldQuaternion(initialQuat);
+            
+            for (let i = 0; i < 6; i++) {
+                const axis = (i === 0) ? 'y' : (i === 3 || i === 5) ? 'x' : 'z';
+                const originalAngle = joints[i].rotation[axis];
+                joints[i].rotation[axis] += epsilon;
+                
+                const newPose = new THREE.Vector3();
+                const newQuat = new THREE.Quaternion();
+                endEffector.getWorldPosition(newPose);
+                endEffector.getWorldQuaternion(newQuat);
 
-  // 自检（简单测试）
-  function runTests(){
-    const results = [];
-    const ok = (name, cond)=> results.push(`${cond?'✔':'✘'} ${name}`);
-    ok('元素存在: pos', !!pos);
-    ok('元素存在: coord', !!coordTxt);
-    ok('元素存在: hlineHit', !!hlineHit);
-    ok('元素存在: elbow', !!elbowS);
-    update();
-    const isNum = v => !isNaN(parseFloat(v));
-    const xy = pos.textContent.match(/([\-\\d\\.]+),\\s*([\-\\d\\.]+)/);
-    ok('坐标可解析', !!xy);
-    ok('X 为数值', xy && isNum(xy[1]));
-    ok('Y 为数值', xy && isNum(xy[2]));
-    testsBox.textContent = results.join('\\n');
-  }
-  runTests();
-})();
-</script>
+                joints[i].rotation[axis] = originalAngle;
+                
+                const linearVel = newPose.clone().sub(initialPose).divideScalar(epsilon);
+                const dQuat = newQuat.clone().multiply(initialQuat.clone().invert());
+                const angularVel = new THREE.Vector3(dQuat.x * 2, dQuat.y * 2, dQuat.z * 2).divideScalar(epsilon);
+
+                jacobian.push([linearVel.x, linearVel.y, linearVel.z, angularVel.x, angularVel.y, angularVel.z]);
+            }
+
+            const J = jacobian.map(row => [...row]); // 6x6
+            const J_T = []; // 6x6
+            for (let i = 0; i < 6; i++) {
+                J_T[i] = [];
+                for (let j = 0; j < 6; j++) J_T[i][j] = J[j][i];
+            }
+
+            // 2. 计算 Δθ = J_T * (J * J_T + λ^2 * I)^-1 * V
+            const JJT = multiplyMatrices(J, J_T);
+            
+            // 添加阻尼项
+            const JJT_damped = JJT.map((row, i) => row.map((val, j) => val + (i === j ? lambda * lambda : 0)));
+            
+            const JJT_inv = invertMatrix(JJT_damped);
+            if (!JJT_inv) return [0,0,0,0,0,0]; // 如果矩阵不可逆，则不运动
+
+            const J_T_JJT_inv = multiplyMatrices(J_T, JJT_inv);
+            
+            const errorVector = targetVelocity.map(v => v * delta); // 将速度转换为位移
+            const jointAngleChanges = multiplyMatrixVector(J_T_JJT_inv, errorVector);
+
+            return jointAngleChanges;
+        }
+
+        // --- 动画循环 ---
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            const delta = clock.getDelta();
+            const moveStep = speed * delta;
+
+            if (controlMode === 'joint') {
+                if (motionState['X+']) joints[0].rotation.y += moveStep;
+                if (motionState['X-']) joints[0].rotation.y -= moveStep;
+                if (motionState['Y+']) joints[1].rotation.z += moveStep;
+                if (motionState['Y-']) joints[1].rotation.z -= moveStep;
+                if (motionState['Z+']) joints[2].rotation.z += moveStep;
+                if (motionState['Z-']) joints[2].rotation.z -= moveStep;
+                if (motionState['A+']) joints[3].rotation.x += moveStep;
+                if (motionState['A-']) joints[3].rotation.x -= moveStep;
+                if (motionState['B+']) joints[4].rotation.z += moveStep;
+                if (motionState['B-']) joints[4].rotation.z -= moveStep;
+                if (motionState['C+']) joints[5].rotation.x += moveStep;
+                if (motionState['C-']) joints[5].rotation.x -= moveStep;
+            } else { // 基坐标模式
+                let targetVelocity = [0, 0, 0, 0, 0, 0]; // [vx, vy, vz, wx, wy, wz]
+                if (motionState['X+']) targetVelocity[0] = speed;
+                if (motionState['X-']) targetVelocity[0] = -speed;
+                if (motionState['Y+']) targetVelocity[1] = speed;
+                if (motionState['Y-']) targetVelocity[1] = -speed;
+                if (motionState['Z+']) targetVelocity[2] = speed;
+                if (motionState['Z-']) targetVelocity[2] = -speed;
+                if (motionState['C+']) targetVelocity[3] = speed; // C -> Roll (绕TCP X轴)
+                if (motionState['C-']) targetVelocity[3] = -speed;
+                if (motionState['B+']) targetVelocity[4] = speed; // B -> Pitch (绕TCP Y轴)
+                if (motionState['B-']) targetVelocity[4] = -speed;
+                if (motionState['A+']) targetVelocity[5] = speed; // A -> Yaw (绕TCP Z轴)
+                if (motionState['A-']) targetVelocity[5] = -speed;
+
+                if (targetVelocity.some(v => v !== 0)) {
+                    const jointChanges = solveIK_DLS(targetVelocity, delta);
+                    
+                    joints[0].rotation.y += jointChanges[0];
+                    joints[1].rotation.z += jointChanges[1];
+                    joints[2].rotation.z += jointChanges[2];
+                    joints[3].rotation.x += jointChanges[3];
+                    joints[4].rotation.z += jointChanges[4];
+                    joints[5].rotation.x += jointChanges[5];
+                }
+            }
+
+            updateInfoPanel();
+            renderer.render(scene, camera);
+        }
+        
+        // --- 更新信息面板 ---
+        function updateInfoPanel() {
+            const radToDeg = (rad) => (rad * 180 / Math.PI).toFixed(2);
+            let html = `<b>关节角度 (°):</b><br/>`;
+            html += `J1 (Y): ${radToDeg(joints[0].rotation.y)}<br/>`;
+            html += `J2 (Z): ${radToDeg(joints[1].rotation.z)}<br/>`;
+            html += `J3 (Z): ${radToDeg(joints[2].rotation.z)}<br/>`;
+            html += `J4 (X): ${radToDeg(joints[3].rotation.x)}<br/>`;
+            html += `J5 (Z): ${radToDeg(joints[4].rotation.z)}<br/>`;
+            html += `J6 (X): ${radToDeg(joints[5].rotation.x)}<br/>`;
+            const tcpPos = new THREE.Vector3();
+            endEffector.getWorldPosition(tcpPos);
+            const tcpRot = new THREE.Euler();
+            tcpRot.setFromQuaternion(endEffector.getWorldQuaternion(new THREE.Quaternion()), 'XYZ');
+            html += `<br/><b>基坐标 (TCP):</b><br/>`;
+            html += `X: ${tcpPos.x.toFixed(3)}<br/>`;
+            html += `Y: ${tcpPos.y.toFixed(3)}<br/>`;
+            html += `Z: ${tcpPos.z.toFixed(3)}<br/>`;
+            html += `A (Z°): ${radToDeg(tcpRot.z)}<br/>`;
+            html += `B (Y°): ${radToDeg(tcpRot.y)}<br/>`;
+            html += `C (X°): ${radToDeg(tcpRot.x)}<br/>`;
+            document.getElementById('coords-display').innerHTML = html;
+        }
+
+        // --- 窗口大小调整 ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
 </body>
 </html>
