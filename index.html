@@ -221,12 +221,12 @@
         const worldAxis = new THREE.AxesHelper(1);
         scene.add(worldAxis);
 
-        const axisLabels = ['Y', 'Z', 'X']; // Y on Red(+X), Z on Green(+Y), X on Blue(+Z)
-        const axisColors = ['#ff4d4d', '#4dff4d', '#4d4dff']; // Y(红), Z(绿), X(蓝)
+        const axisLabels = ['X', 'Y', 'Z']; // X on Red(+X), Y on Green(+Y), Z on Blue(+Z)
+        const axisColors = ['#ff4d4d', '#4dff4d', '#4d4dff']; // X(红), Y(绿), Z(蓝)
         const axisPositions = [
-            new THREE.Vector3(1.1, 0, 0), // Y label on three.js X axis
-            new THREE.Vector3(0, 1.1, 0), // Z label on three.js Y axis
-            new THREE.Vector3(0, 0, 1.1)  // X label on three.js Z axis
+            new THREE.Vector3(1.1, 0, 0), // X label on three.js X axis
+            new THREE.Vector3(0, 1.1, 0), // Y label on three.js Y axis
+            new THREE.Vector3(0, 0, 1.1)  // Z label on three.js Z axis
         ];
 
         axisLabels.forEach((text, i) => {
@@ -243,8 +243,7 @@
         // --- 机器人模型 ---
         const robot = new THREE.Group();
         scene.add(robot);
-        // **修正**: 旋转整个机器人，使其在J1=0时指向X正方向(three.js的-Z方向)
-        robot.rotation.y = Math.PI / 2; 
+        // 机器人模型初始指向 three.js 的 +X 方向
 
         const linkMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.5, roughness: 0.5 });
         const jointMaterial = new THREE.MeshStandardMaterial({ color: 0x0055aa });
@@ -460,20 +459,20 @@
             } else { // 基坐标模式
                 let targetVelocity = [0, 0, 0, 0, 0, 0]; // [vx, vy, vz, wx, wy, wz] in three.js coordinates
                 
-                if (motionState['X+']) targetVelocity[2] = -speed; // X+ (用户向前) -> -Z (three.js)
-                if (motionState['X-']) targetVelocity[2] = speed;  // X- (用户向后) -> +Z (three.js)
-                if (motionState['Y+']) targetVelocity[0] = speed;  // Y+ (用户向右) -> +X (three.js)
-                if (motionState['Y-']) targetVelocity[0] = -speed;
-                if (motionState['Z+']) targetVelocity[1] = speed;  // Z+ (用户向上) -> +Y (three.js)
-                if (motionState['Z-']) targetVelocity[1] = -speed;
+                if (motionState['X+']) targetVelocity[0] = speed;  // X+ -> +X (three.js)
+                if (motionState['X-']) targetVelocity[0] = -speed; // X- -> -X (three.js)
+                if (motionState['Y+']) targetVelocity[2] = -speed; // Y+ -> -Z (three.js)
+                if (motionState['Y-']) targetVelocity[2] = speed;  // Y- -> +Z (three.js)
+                if (motionState['Z+']) targetVelocity[1] = speed;  // Z+ -> +Y (three.js)
+                if (motionState['Z-']) targetVelocity[1] = -speed; // Z- -> -Y (three.js)
 
                 // A, B, C 对应绕用户坐标系 Z, Y, X 旋转
-                if (motionState['A+']) targetVelocity[4] = speed;  // A (绕Z_up) -> rotY (three.js)
+                if (motionState['A+']) targetVelocity[4] = speed;  // A (绕Z) -> rotY (three.js)
                 if (motionState['A-']) targetVelocity[4] = -speed;
-                if (motionState['B+']) targetVelocity[3] = speed;  // B (绕Y_right) -> rotX (three.js)
-                if (motionState['B-']) targetVelocity[3] = -speed;
-                if (motionState['C+']) targetVelocity[5] = -speed; // C (绕X_fwd) -> rotZ- (three.js)
-                if (motionState['C-']) targetVelocity[5] = speed;
+                if (motionState['B+']) targetVelocity[5] = -speed; // B (绕Y) -> rotZ- (three.js)
+                if (motionState['B-']) targetVelocity[5] = speed;
+                if (motionState['C+']) targetVelocity[3] = speed;  // C (绕X) -> rotX (three.js)
+                if (motionState['C-']) targetVelocity[3] = -speed;
 
                 if (targetVelocity.some(v => v !== 0)) {
                     const jointChanges = solveIK_DLS(targetVelocity, delta);
@@ -510,12 +509,12 @@
             tcpRot.setFromQuaternion(tcp.getWorldQuaternion(new THREE.Quaternion()), 'XYZ');
 
             html += `<br/><b>基坐标 (TCP, mm):</b><br/>`;
-            html += `X: ${(-tcpPos.z * 1000).toFixed(2)}<br/>`; // 用户 X 是 three.js -Z
-            html += `Y: ${(tcpPos.x * 1000).toFixed(2)}<br/>`;  // 用户 Y 是 three.js X
+            html += `X: ${(tcpPos.x * 1000).toFixed(2)}<br/>`;  // 用户 X 是 three.js X
+            html += `Y: ${(-tcpPos.z * 1000).toFixed(2)}<br/>`; // 用户 Y 是 three.js -Z
             html += `Z: ${(tcpPos.y * 1000).toFixed(2)}<br/>`;  // 用户 Z 是 three.js Y
             html += `A (Z°): ${radToDeg(tcpRot.y)}<br/>`;      // 用户 A (绕Z) 是 three.js 绕Y
-            html += `B (Y°): ${radToDeg(tcpRot.x)}<br/>`;      // 用户 B (绕Y) 是 three.js 绕X
-            html += `C (X°): ${radToDeg(-tcpRot.z)}<br/>`;     // 用户 C (绕X) 是 three.js 绕-Z
+            html += `B (Y°): ${radToDeg(-tcpRot.z)}<br/>`;     // 用户 B (绕Y) 是 three.js 绕-Z
+            html += `C (X°): ${radToDeg(tcpRot.x)}<br/>`;      // 用户 C (绕X) 是 three.js 绕X
             document.getElementById('coords-display').innerHTML = html;
         }
 
