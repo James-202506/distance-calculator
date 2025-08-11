@@ -20,6 +20,12 @@
             height: 100%;
             z-index: 1;
         }
+        /* 新增: 坐标轴标签的样式 */
+        .axis-label-text {
+            font-size: 16px;
+            font-weight: bold;
+            text-shadow: 0 0 5px black; /* 给文字加一点黑色描边，使其更清晰 */
+        }
         #control-panel {
             position: absolute; /* 改为绝对定位 */
             top: 20px;        /* 距离顶部20px */
@@ -179,6 +185,7 @@
     <script type="module">
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
         // --- 场景设置 ---
         const scene = new THREE.Scene();
@@ -190,6 +197,13 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(window.devicePixelRatio);
         document.getElementById('viewport').appendChild(renderer.domElement);
+
+        const labelRenderer = new CSS2DRenderer();
+        labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        labelRenderer.domElement.style.position = 'absolute';
+        labelRenderer.domElement.style.top = '0px';
+        labelRenderer.domElement.style.pointerEvents = 'none';
+        document.body.appendChild(labelRenderer.domElement);
 
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.target.set(0, 1, 0);
@@ -207,9 +221,31 @@
         const worldAxis = new THREE.AxesHelper(1);
         scene.add(worldAxis);
 
-        // --- 机器人模型 (与之前版本相同) ---
+        const axisLabels = ['Y', 'Z', 'X']; // Y on Red(+X), Z on Green(+Y), X on Blue(+Z)
+        const axisColors = ['#ff4d4d', '#4dff4d', '#4d4dff']; // Y(红), Z(绿), X(蓝)
+        const axisPositions = [
+            new THREE.Vector3(1.1, 0, 0), // Y label on three.js X axis
+            new THREE.Vector3(0, 1.1, 0), // Z label on three.js Y axis
+            new THREE.Vector3(0, 0, 1.1)  // X label on three.js Z axis
+        ];
+
+        axisLabels.forEach((text, i) => {
+            const div = document.createElement('div');
+            div.className = 'axis-label-text';
+            div.textContent = text;
+            div.style.color = axisColors[i];
+
+            const label = new CSS2DObject(div);
+            label.position.copy(axisPositions[i]);
+            worldAxis.add(label);
+        });
+
+        // --- 机器人模型 ---
         const robot = new THREE.Group();
         scene.add(robot);
+        // **修正**: 旋转整个机器人，使其在J1=0时指向X正方向(three.js的-Z方向)
+        robot.rotation.y = Math.PI / 2; 
+
         const linkMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.5, roughness: 0.5 });
         const jointMaterial = new THREE.MeshStandardMaterial({ color: 0x0055aa });
         const baseHeight = 0.2, link1Height = 0.5, link2Length = 1.5, link3Length = 1.3, wristLength = 0.3;
@@ -263,20 +299,26 @@
         const joint6 = new THREE.Group();
         link5.add(joint6);
         joint6.position.x = wristLength/2;
-        const endEffector = new THREE.Group();
+        const endEffector = new THREE.Group(); // 法兰盘 (Tool0)
         joint6.add(endEffector);
         const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.05, 32), jointMaterial);
         flange.rotation.z = Math.PI/2;
         endEffector.add(flange);
-        const tool = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.2, 32), new THREE.MeshStandardMaterial({color: 0xffff00}));
-        tool.position.x = 0.1;
+        
+        const toolConeHeight = 0.2;
+        const toolConeBaseOffset = 0.1;
+        const tool = new THREE.Mesh(new THREE.ConeGeometry(0.05, toolConeHeight, 32), new THREE.MeshStandardMaterial({color: 0xffff00}));
+        tool.position.x = toolConeBaseOffset;
         tool.rotation.z = -Math.PI / 2;
         endEffector.add(tool);
-        const tcpHelper = new THREE.AxesHelper(0.25);
-        endEffector.add(tcpHelper);
+        
+        const tcp = new THREE.Object3D();
+        tcp.position.x = toolConeBaseOffset + toolConeHeight; // 精确定位TCP
+        endEffector.add(tcp);
+
         const joints = [joint1, joint2, joint3, joint4, joint5, joint6];
 
-        // --- 控制逻辑 (与之前版本相同) ---
+        // --- 控制逻辑 ---
         const motionState = {};
         const buttons = document.querySelectorAll('.control-button');
         let controlMode = 'joint';
@@ -309,77 +351,53 @@
         const clock = new THREE.Clock();
         
         // --- 矩阵运算辅助函数 ---
-        // 矩阵求逆 (使用高斯-若尔当消元法)
         function invertMatrix(M) {
             if (M.length !== M[0].length) { return; }
             const n = M.length;
             const I = Array(n).fill(0).map(() => Array(n).fill(0));
             for (let i = 0; i < n; i++) I[i][i] = 1;
-
             const C = M.map((row, i) => [...row, ...I[i]]);
-
             for (let i = 0; i < n; i++) {
                 let pivot = i;
                 while (pivot < n && C[pivot][i] === 0) pivot++;
-                if (pivot === n) return null; // No unique solution
+                if (pivot === n) return null;
                 [C[i], C[pivot]] = [C[pivot], C[i]];
-                
                 let div = C[i][i];
                 for (let j = i; j < 2 * n; j++) C[i][j] /= div;
-                
                 for (let k = 0; k < n; k++) {
                     if (k !== i) {
                         let mult = C[k][i];
-                        for (let j = i; j < 2 * n; j++) {
-                            C[k][j] -= mult * C[i][j];
-                        }
+                        for (let j = i; j < 2 * n; j++) C[k][j] -= mult * C[i][j];
                     }
                 }
             }
             return C.map(row => row.slice(n));
         }
-
-        // 矩阵乘法
         function multiplyMatrices(A, B) {
             const rowsA = A.length, colsA = A[0].length, rowsB = B.length, colsB = B[0].length;
             if (colsA !== rowsB) return null;
             const C = Array(rowsA).fill(0).map(() => Array(colsB).fill(0));
-            for (let i = 0; i < rowsA; i++) {
-                for (let j = 0; j < colsB; j++) {
-                    for (let k = 0; k < colsA; k++) {
-                        C[i][j] += A[i][k] * B[k][j];
-                    }
-                }
-            }
+            for (let i = 0; i < rowsA; i++) for (let j = 0; j < colsB; j++) for (let k = 0; k < colsA; k++) C[i][j] += A[i][k] * B[k][j];
             return C;
         }
-        
-        // 向量乘以矩阵
         function multiplyMatrixVector(M, V) {
-            const rows = M.length;
-            const cols = M[0].length;
+            const rows = M.length, cols = M[0].length;
             if (cols !== V.length) return null;
             const R = Array(rows).fill(0);
-            for (let i = 0; i < rows; i++) {
-                for (let j = 0; j < cols; j++) {
-                    R[i] += M[i][j] * V[j];
-                }
-            }
+            for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) R[i] += M[i][j] * V[j];
             return R;
         }
 
-
         // --- 逆运动学 (阻尼最小二乘法 DLS) ---
         function solveIK_DLS(targetVelocity, delta) {
-            const lambda = 0.1; // 阻尼系数，防止奇异姿态和运动过快
-            const epsilon = 0.001; // 数值微分的微小变化量
+            const lambda = 0.1;
+            const epsilon = 0.001;
 
-            // 1. 计算雅可比矩阵 J
             const jacobian = [];
             const initialPose = new THREE.Vector3();
             const initialQuat = new THREE.Quaternion();
-            endEffector.getWorldPosition(initialPose);
-            endEffector.getWorldQuaternion(initialQuat);
+            tcp.getWorldPosition(initialPose);
+            tcp.getWorldQuaternion(initialQuat);
             
             for (let i = 0; i < 6; i++) {
                 const axis = (i === 0) ? 'y' : (i === 3 || i === 5) ? 'x' : 'z';
@@ -388,8 +406,8 @@
                 
                 const newPose = new THREE.Vector3();
                 const newQuat = new THREE.Quaternion();
-                endEffector.getWorldPosition(newPose);
-                endEffector.getWorldQuaternion(newQuat);
+                tcp.getWorldPosition(newPose);
+                tcp.getWorldQuaternion(newQuat);
 
                 joints[i].rotation[axis] = originalAngle;
                 
@@ -400,25 +418,20 @@
                 jacobian.push([linearVel.x, linearVel.y, linearVel.z, angularVel.x, angularVel.y, angularVel.z]);
             }
 
-            const J = jacobian.map(row => [...row]); // 6x6
-            const J_T = []; // 6x6
+            const J = jacobian.map(row => [...row]);
+            const J_T = [];
             for (let i = 0; i < 6; i++) {
                 J_T[i] = [];
                 for (let j = 0; j < 6; j++) J_T[i][j] = J[j][i];
             }
 
-            // 2. 计算 Δθ = J_T * (J * J_T + λ^2 * I)^-1 * V
             const JJT = multiplyMatrices(J, J_T);
-            
-            // 添加阻尼项
             const JJT_damped = JJT.map((row, i) => row.map((val, j) => val + (i === j ? lambda * lambda : 0)));
-            
             const JJT_inv = invertMatrix(JJT_damped);
-            if (!JJT_inv) return [0,0,0,0,0,0]; // 如果矩阵不可逆，则不运动
+            if (!JJT_inv) return [0,0,0,0,0,0];
 
             const J_T_JJT_inv = multiplyMatrices(J_T, JJT_inv);
-            
-            const errorVector = targetVelocity.map(v => v * delta); // 将速度转换为位移
+            const errorVector = targetVelocity.map(v => v * delta);
             const jointAngleChanges = multiplyMatrixVector(J_T_JJT_inv, errorVector);
 
             return jointAngleChanges;
@@ -445,19 +458,22 @@
                 if (motionState['C+']) joints[5].rotation.x += moveStep;
                 if (motionState['C-']) joints[5].rotation.x -= moveStep;
             } else { // 基坐标模式
-                let targetVelocity = [0, 0, 0, 0, 0, 0]; // [vx, vy, vz, wx, wy, wz]
-                if (motionState['X+']) targetVelocity[0] = speed;
-                if (motionState['X-']) targetVelocity[0] = -speed;
-                if (motionState['Y+']) targetVelocity[1] = speed;
-                if (motionState['Y-']) targetVelocity[1] = -speed;
-                if (motionState['Z+']) targetVelocity[2] = speed;
-                if (motionState['Z-']) targetVelocity[2] = -speed;
-                if (motionState['C+']) targetVelocity[3] = speed; // C -> Roll (绕TCP X轴)
-                if (motionState['C-']) targetVelocity[3] = -speed;
-                if (motionState['B+']) targetVelocity[4] = speed; // B -> Pitch (绕TCP Y轴)
-                if (motionState['B-']) targetVelocity[4] = -speed;
-                if (motionState['A+']) targetVelocity[5] = speed; // A -> Yaw (绕TCP Z轴)
-                if (motionState['A-']) targetVelocity[5] = -speed;
+                let targetVelocity = [0, 0, 0, 0, 0, 0]; // [vx, vy, vz, wx, wy, wz] in three.js coordinates
+                
+                if (motionState['X+']) targetVelocity[2] = -speed; // X+ (用户向前) -> -Z (three.js)
+                if (motionState['X-']) targetVelocity[2] = speed;  // X- (用户向后) -> +Z (three.js)
+                if (motionState['Y+']) targetVelocity[0] = speed;  // Y+ (用户向右) -> +X (three.js)
+                if (motionState['Y-']) targetVelocity[0] = -speed;
+                if (motionState['Z+']) targetVelocity[1] = speed;  // Z+ (用户向上) -> +Y (three.js)
+                if (motionState['Z-']) targetVelocity[1] = -speed;
+
+                // A, B, C 对应绕用户坐标系 Z, Y, X 旋转
+                if (motionState['A+']) targetVelocity[4] = speed;  // A (绕Z_up) -> rotY (three.js)
+                if (motionState['A-']) targetVelocity[4] = -speed;
+                if (motionState['B+']) targetVelocity[3] = speed;  // B (绕Y_right) -> rotX (three.js)
+                if (motionState['B-']) targetVelocity[3] = -speed;
+                if (motionState['C+']) targetVelocity[5] = -speed; // C (绕X_fwd) -> rotZ- (three.js)
+                if (motionState['C-']) targetVelocity[5] = speed;
 
                 if (targetVelocity.some(v => v !== 0)) {
                     const jointChanges = solveIK_DLS(targetVelocity, delta);
@@ -473,6 +489,7 @@
 
             updateInfoPanel();
             renderer.render(scene, camera);
+            labelRenderer.render(scene, camera);
         }
         
         // --- 更新信息面板 ---
@@ -485,17 +502,20 @@
             html += `J4 (X): ${radToDeg(joints[3].rotation.x)}<br/>`;
             html += `J5 (Z): ${radToDeg(joints[4].rotation.z)}<br/>`;
             html += `J6 (X): ${radToDeg(joints[5].rotation.x)}<br/>`;
+            
             const tcpPos = new THREE.Vector3();
-            endEffector.getWorldPosition(tcpPos);
+            tcp.getWorldPosition(tcpPos);
+
             const tcpRot = new THREE.Euler();
-            tcpRot.setFromQuaternion(endEffector.getWorldQuaternion(new THREE.Quaternion()), 'XYZ');
-            html += `<br/><b>基坐标 (TCP):</b><br/>`;
-            html += `X: ${tcpPos.x.toFixed(3)}<br/>`;
-            html += `Y: ${tcpPos.y.toFixed(3)}<br/>`;
-            html += `Z: ${tcpPos.z.toFixed(3)}<br/>`;
-            html += `A (Z°): ${radToDeg(tcpRot.z)}<br/>`;
-            html += `B (Y°): ${radToDeg(tcpRot.y)}<br/>`;
-            html += `C (X°): ${radToDeg(tcpRot.x)}<br/>`;
+            tcpRot.setFromQuaternion(tcp.getWorldQuaternion(new THREE.Quaternion()), 'XYZ');
+
+            html += `<br/><b>基坐标 (TCP, mm):</b><br/>`;
+            html += `X: ${(-tcpPos.z * 1000).toFixed(2)}<br/>`; // 用户 X 是 three.js -Z
+            html += `Y: ${(tcpPos.x * 1000).toFixed(2)}<br/>`;  // 用户 Y 是 three.js X
+            html += `Z: ${(tcpPos.y * 1000).toFixed(2)}<br/>`;  // 用户 Z 是 three.js Y
+            html += `A (Z°): ${radToDeg(tcpRot.y)}<br/>`;      // 用户 A (绕Z) 是 three.js 绕Y
+            html += `B (Y°): ${radToDeg(tcpRot.x)}<br/>`;      // 用户 B (绕Y) 是 three.js 绕X
+            html += `C (X°): ${radToDeg(-tcpRot.z)}<br/>`;     // 用户 C (绕X) 是 three.js 绕-Z
             document.getElementById('coords-display').innerHTML = html;
         }
 
@@ -504,6 +524,7 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
         });
 
         animate();
